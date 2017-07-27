@@ -1,0 +1,54 @@
+---
+title: "Voter File W/ Phonetic-Hashing Deduplication"
+output:
+  pdf_document: default
+  html_notebook: default
+  html_document: default
+---
+
+// The whole Ohio Voter File!
+
+```{r, message=FALSE, warning=FALSE}
+require(tidyverse)
+require(magrittr)
+require(phonics)
+require(lubridate)
+Ohio_file<-read.csv(file="~/Ohio_Voter_File/Ohio_Voter_File_Cut.csv", sep=",", header=TRUE) %>% mutate(FIRST_NAME_SOUNDEX=metaphone(FIRST_NAME), LAST_NAME_SOUNDEX=metaphone(LAST_NAME)) %>% mutate(DATE_OF_BIRTH=as.Date(DATE_OF_BIRTH)) %>% 
+  mutate(BIRTH_MONTH=month(DATE_OF_BIRTH), BIRTH_DAY=day(DATE_OF_BIRTH), BIRTH_YEAR=year(DATE_OF_BIRTH))
+```
+
+This is a bit messy (apologies for the long strings of pipes), but essentially the point is to read in the voter file for all of Ohio, and then use a phonetic encoding algorithm to account for transcriptions, misspellings, and the like. 
+The algorithm used is the [Metaphone algorithm](https://xlinux.nist.gov/dads/HTML/metaphone.html), which is used for hashing words to their phonetic pronounciation. 
+
+```{r, message=FALSE, warning=FALSE}
+require(sqldf)
+dupes<-nrow(sqldf("select FIRST_NAME, LAST_NAME, DATE_OF_BIRTH, count(*) as number_unique from Ohio_file group by 1,2,3 order by 4 desc"))
+dupes_wo_date<-nrow(sqldf("select FIRST_NAME, LAST_NAME, BIRTH_MONTH, BIRTH_YEAR, count(*) as number_unique from Ohio_file group by 1,2,3,4 order by 5 desc"))
+dupes_wo_month<-nrow(sqldf("select FIRST_NAME, LAST_NAME, BIRTH_YEAR, count(*) as number_unique from Ohio_file group by 1,2,3 order by 4 desc"))
+
+
+```
+
+
+Now that we've cleaned our data, separated out birth dates into day, month, and year, let's see what we can come up with. Initially, there are `r length(unique(Ohio_file$SOS_VOTERID))` unique observations in our county level file (making the assumption that each. Grouping by first name, last name, and date of birth gives us `r dupes` observations, showing that there are `r length(unique(Ohio_file$SOS_VOTERID))-dupes` entries in the Ohio voter file with the same first name, last name, and date of birth. This represents `r round(((length(unique(Ohio_file$SOS_VOTERID))-dupes)/length(unique(Ohio_file$SOS_VOTERID)))*100,2)` percent of the entire file. 
+
+It is important to note that most states are generally refusing to give DOB over to the Pence comission. If we remove date of birth, and instead use month and year of birth, this gives us `r dupes_wo_date` unique observations, with `r length(unique(Ohio_file$SOS_VOTERID))-dupes_wo_date` entires being recorded as having multiple entries. This represents `r round(((length(unique(Ohio_file$SOS_VOTERID))-dupes_wo_date)/length(unique(Ohio_file$SOS_VOTERID)))*100,2)` percent of the entire file. Generalizing this to states only giving year of birth gives us `r dupes_wo_month` unique observations, with `r length(unique(Ohio_file$SOS_VOTERID))-dupes_wo_month` entires being recorded as having multiple entries. This represents `r round(((length(unique(Ohio_file$SOS_VOTERID))-dupes_wo_month)/length(unique(Ohio_file$SOS_VOTERID)))*100,2)` percent of the entire file. 
+
+
+This has been covered before, in much greater depth or skill than I could have done, thanks to [Stephen Ansolabehere and Eitan D. Hersh](http://www.eitanhersh.com/uploads/7/9/7/5/7975685/agdn_v1_4.pdf). However, I am interested in what happens when a fuzzy-string matching algorithm is used to detect duplicates based off of their phonetic pronounciation. By preserving pronounciation between spelling, a pronounciation hashing algorithm such as Soundex, or as used here, Metaphone can account for some transcription errors in how names are encoded. 
+
+
+```{r}
+# Soundex encoding 
+dupes<-nrow(sqldf("select FIRST_NAME_SOUNDEX, LAST_NAME_SOUNDEX, DATE_OF_BIRTH, count(*) as number_unique from Ohio_file group by 1,2,3 order by 4 desc"))
+dupes_wo_date<-nrow(sqldf("select FIRST_NAME_SOUNDEX, LAST_NAME_SOUNDEX, BIRTH_MONTH, BIRTH_YEAR, count(*) as number_unique from Ohio_file group by 1,2,3,4 order by 5 desc"))
+dupes_wo_month<-nrow(sqldf("select FIRST_NAME_SOUNDEX, LAST_NAME_SOUNDEX, BIRTH_YEAR, count(*) as number_unique from Ohio_file group by 1,2,3 order by 4 desc"))
+```
+
+
+Now I will repeat the previous excersise, but with using the Metaphone hashing of first and last names, instead of the actual first and last names. Initially, there are `r length(unique(Ohio_file$SOS_VOTERID))` unique observations in our county level file (making the assumption that each. Grouping by phonetic first name, phonetic last name, and date of birth gives us `r dupes` observations, showing that there are `r length(unique(Ohio_file$SOS_VOTERID))-dupes` entries in the Ohio voter file with the same phonetic first name, phonetic last name, and date of birth. This represents `r round(((length(unique(Ohio_file$SOS_VOTERID))-dupes)/length(unique(Ohio_file$SOS_VOTERID)))*100,2)` percent of the entire file. If we remove date of birth, and instead use month and year of birth, this gives us `r dupes_wo_date` unique observations, with `r length(unique(Ohio_file$SOS_VOTERID))-dupes_wo_date` entires being recorded as having multiple entries. This represents `r round(((length(unique(Ohio_file$SOS_VOTERID))-dupes_wo_date)/length(unique(Ohio_file$SOS_VOTERID)))*100,2)` percent of the entire file. Generalizing this to only year of birth gives us `r dupes_wo_month` unique observations, with `r length(unique(Ohio_file$SOS_VOTERID))-dupes_wo_month` entires being recorded as having multiple entries. This represents `r round(((length(unique(Ohio_file$SOS_VOTERID))-dupes_wo_month)/length(unique(Ohio_file$SOS_VOTERID)))*100,2)` percent of the entire file. 
+ 
+Personal Comments: 
+
+
+I have mixed feelings about using a fuzzy match- on one hand it will reduce instances where transcription errors between two databases results in a registered voter not matching another registry. However, it will also significantly increase the amounts of false positives for multiple registration between files. Thoughts? 
